@@ -1,0 +1,695 @@
+if getgenv().PenguinLoaded then pcall(getgenv().PenguinLoaded) end
+
+local plrs = game:GetService("Players")
+local ws = game:GetService("Workspace")
+local rs = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
+local rep = game:GetService("ReplicatedStorage")
+local core = game:GetService("CoreGui")
+local hs = game:GetService("HttpService")
+
+local lp = plrs.LocalPlayer
+local guiParent = (pcall(function() return gethui() end) and gethui()) or core
+
+-- Special User Verification (trebtrebalt / ID 9190721677)
+local SPECIAL_USER_ID = 9190721677
+local SPECIAL_USERNAME = "trebtrebalt"
+local isSpecialUser = (lp.UserId == SPECIAL_USER_ID) or (lp.Name:lower() == SPECIAL_USERNAME:lower())
+
+-- Cleanup old instances
+for _, obj in pairs(guiParent:GetChildren()) do if obj.Name == "PenguinHub" or obj.Name == "PenguinKey" or obj.Name == "PenguinMiniStats" then obj:Destroy() end end
+if lp and lp:FindFirstChild("PlayerGui") then
+    for _, obj in pairs(lp.PlayerGui:GetChildren()) do if obj.Name == "PenguinHub" or obj.Name == "PenguinKey" or obj.Name == "PenguinMiniStats" then obj:Destroy() end end
+end
+
+local conns, tasks = {}, {}
+getgenv().PenguinLoaded = function()
+    for _, c in pairs(conns) do if c then c:Disconnect() end end
+    for _, t in pairs(tasks) do pcall(task.cancel, t) end
+    table.clear(conns); table.clear(tasks)
+    for _, obj in pairs(guiParent:GetChildren()) do if obj.Name == "PenguinHub" or obj.Name == "PenguinKey" or obj.Name == "PenguinMiniStats" then obj:Destroy() end end
+end
+
+-- Save / Load Level System (Max Level 250)
+local saveFileName = "PenguinHub_SaveData.json"
+local MAX_LEVEL = 250
+local levelData = {level = 1, xp = 0, maxXp = 100}
+
+local function loadData()
+    if isSpecialUser then
+        levelData.level = 250
+        levelData.xp = 0
+        levelData.maxXp = 0
+        return
+    end
+
+    if readfile and isfile and isfile(saveFileName) then
+        pcall(function()
+            local raw = readfile(saveFileName)
+            local decoded = hs:JSONDecode(raw)
+            if decoded and type(decoded) == "table" then
+                levelData.level = decoded.level or 1
+                levelData.xp = decoded.xp or 0
+                levelData.maxXp = decoded.maxXp or 100
+            end
+        end)
+    end
+end
+
+local function saveData()
+    if isSpecialUser then return end
+    if writefile then
+        pcall(function()
+            writefile(saveFileName, hs:JSONEncode(levelData))
+        end)
+    end
+end
+
+loadData()
+
+if isSpecialUser then
+    levelData.level = 250
+    levelData.xp = 0
+    levelData.maxXp = 0
+end
+
+local function addXp(amount)
+    if isSpecialUser or levelData.level >= MAX_LEVEL then return end
+    levelData.xp = levelData.xp + amount
+    while levelData.xp >= levelData.maxXp and levelData.level < MAX_LEVEL do
+        levelData.xp = levelData.xp - levelData.maxXp
+        levelData.level = levelData.level + 1
+        levelData.maxXp = math.floor(levelData.maxXp * 1.15)
+    end
+    saveData()
+end
+
+local function isRakoofHPZero()
+    local rakoofVal = rep:FindFirstChild("RakoofHP", true) 
+        or ws:FindFirstChild("RakoofHP", true) 
+        or (lp:FindFirstChild("stats") and lp.stats:FindFirstChild("RakoofHP"))
+        or (lp:FindFirstChild("leaderstats") and lp.leaderstats:FindFirstChild("RakoofHP"))
+        
+    if rakoofVal and (rakoofVal:IsA("NumberValue") or rakoofVal:IsA("IntValue")) then
+        return rakoofVal.Value <= 0
+    end
+    return true
+end
+
+local function makeDrag(f, h)
+    h = h or f
+    local dragging, dragInput, startPos, startGuiPos
+    h.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; startPos = inp.Position; startGuiPos = f.Position
+            inp.Changed:Connect(function() if inp.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    h.InputChanged:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then dragInput = inp end
+    end)
+    uis.InputChanged:Connect(function(inp)
+        if inp == dragInput and dragging then
+            local delta = inp.Position - startPos
+            f.Position = UDim2.new(startGuiPos.X.Scale, startGuiPos.X.Offset + delta.X, startGuiPos.Y.Scale, startGuiPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+-- Screen Guis
+local screen = Instance.new("ScreenGui", guiParent)
+screen.Name = "PenguinHub"; screen.ResetOnSpawn = false; screen.DisplayOrder = 999; screen.IgnoreGuiInset = true
+
+local keyScreen = Instance.new("ScreenGui", guiParent)
+keyScreen.Name = "PenguinKey"; keyScreen.ResetOnSpawn = false; keyScreen.DisplayOrder = 1000; keyScreen.IgnoreGuiInset = true
+
+-- Mini Level Status Widget with Progress Bar
+local miniGui = Instance.new("ScreenGui", guiParent)
+miniGui.Name = "PenguinMiniStats"; miniGui.ResetOnSpawn = false; miniGui.DisplayOrder = 998; miniGui.IgnoreGuiInset = true
+
+local miniFrame = Instance.new("Frame", miniGui)
+miniFrame.Size = UDim2.new(0, 210, 0, 110); miniFrame.Position = UDim2.new(0, 20, 0, 150)
+miniFrame.BackgroundColor3 = Color3.fromRGB(15, 22, 38); miniFrame.Visible = false
+Instance.new("UICorner", miniFrame).CornerRadius = UDim.new(0, 10)
+local msStroke = Instance.new("UIStroke", miniFrame); msStroke.Color = isSpecialUser and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(0, 180, 255)
+makeDrag(miniFrame)
+
+local miniTitle = Instance.new("TextLabel", miniFrame)
+miniTitle.Size = UDim2.new(1, 0, 0, 25); miniTitle.BackgroundTransparency = 1
+miniTitle.Text = isSpecialUser and "🛡️ TREBTREBALT STATS" or "🐧 PENGUIN STATS"
+miniTitle.TextColor3 = isSpecialUser and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(120, 210, 255)
+miniTitle.Font = Enum.Font.GothamBold; miniTitle.TextSize = 12
+
+local miniStatus = Instance.new("TextLabel", miniFrame)
+miniStatus.Size = UDim2.new(1, -10, 0, 35); miniStatus.Position = UDim2.new(0, 8, 0, 25); miniStatus.BackgroundTransparency = 1
+miniStatus.Text = "Level: 250 / 250\nXP: MAX 👑"; miniStatus.TextColor3 = Color3.fromRGB(0, 220, 150)
+miniStatus.Font = Enum.Font.GothamBold; miniStatus.TextSize = 11; miniStatus.TextXAlignment = Enum.TextXAlignment.Left
+
+local barBg = Instance.new("Frame", miniFrame)
+barBg.Size = UDim2.new(1, -16, 0, 12); barBg.Position = UDim2.new(0, 8, 0, 75)
+barBg.BackgroundColor3 = Color3.fromRGB(30, 42, 65)
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(0, 6)
+
+local barFill = Instance.new("Frame", barBg)
+barFill.Size = UDim2.new(1, 0, 1, 0)
+barFill.BackgroundColor3 = isSpecialUser and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(0, 180, 255)
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(0, 6)
+
+-- Key Window
+local keyMain = Instance.new("Frame", keyScreen)
+keyMain.Size = UDim2.new(0, 400, 0, 220); keyMain.Position = UDim2.new(0.5, -200, 0.5, -110)
+keyMain.BackgroundColor3 = Color3.fromRGB(18, 28, 48); keyMain.ZIndex = 300
+Instance.new("UICorner", keyMain).CornerRadius = UDim.new(0, 14)
+local ks = Instance.new("UIStroke", keyMain); ks.Color = isSpecialUser and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(0, 180, 255); ks.Thickness = 2
+makeDrag(keyMain)
+
+local kTitle = Instance.new("TextLabel", keyMain)
+kTitle.Size = UDim2.new(1, 0, 0, 40); kTitle.BackgroundTransparency = 1; kTitle.ZIndex = 301
+kTitle.Text = isSpecialUser and "🛡️ PENGUIN HUB — OWNER AUTH 🛡️" or "🐧 PENGUIN HUB — AUTHENTICATION 🐧"
+kTitle.TextColor3 = isSpecialUser and Color3.fromRGB(255, 120, 120) or Color3.fromRGB(120, 210, 255)
+kTitle.Font = Enum.Font.GothamBold; kTitle.TextSize = 14
+
+local kBox = Instance.new("TextBox", keyMain)
+kBox.Size = UDim2.new(1, -40, 0, 45); kBox.Position = UDim2.new(0, 20, 0, 60); kBox.ZIndex = 301
+kBox.BackgroundColor3 = Color3.fromRGB(28, 42, 70); kBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+kBox.PlaceholderText = "Enter Key..."; kBox.Text = ""; kBox.Font = Enum.Font.GothamBold; kBox.TextSize = 14
+Instance.new("UICorner", kBox).CornerRadius = UDim.new(0, 8)
+local kbs = Instance.new("UIStroke", kBox); kbs.Color = Color3.fromRGB(0, 140, 220)
+
+local kBtn = Instance.new("TextButton", keyMain)
+kBtn.Size = UDim2.new(1, -40, 0, 45); kBtn.Position = UDim2.new(0, 20, 0, 125); kBtn.ZIndex = 301
+kBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220); kBtn.Text = "SUBMIT KEY"; kBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+kBtn.Font = Enum.Font.GothamBold; kBtn.TextSize = 14
+Instance.new("UICorner", kBtn).CornerRadius = UDim.new(0, 8)
+
+-- Main Hub Window
+local main = Instance.new("Frame", screen)
+main.Size = UDim2.new(0, 640, 0, 420); main.Position = UDim2.new(0.5, -320, 0.5, -210)
+main.BackgroundColor3 = Color3.fromRGB(18, 28, 48); main.ZIndex = 10; main.Visible = false
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
+local ms = Instance.new("UIStroke", main); ms.Color = isSpecialUser and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(0, 180, 255); ms.Thickness = 2
+makeDrag(main)
+
+local toggle = Instance.new("TextButton", screen)
+toggle.Size = UDim2.new(0, 48, 0, 48); toggle.Position = UDim2.new(0, 20, 0.3, 0)
+toggle.BackgroundColor3 = Color3.fromRGB(24, 38, 64); toggle.Text = isSpecialUser and "🛡️" or "🐧"
+toggle.TextSize = 24; toggle.ZIndex = 200; toggle.Visible = false
+Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 12)
+local ts = Instance.new("UIStroke", toggle); ts.Color = isSpecialUser and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(0, 180, 255); ts.Thickness = 2
+makeDrag(toggle)
+
+local top = Instance.new("Frame", main)
+top.Size = UDim2.new(1, 0, 0, 45); top.BackgroundTransparency = 1; top.ZIndex = 11
+makeDrag(main, top)
+
+local title = Instance.new("TextLabel", top)
+title.Size = UDim2.new(0, 260, 1, 0); title.Position = UDim2.new(0, 15, 0, 0); title.BackgroundTransparency = 1
+title.Text = isSpecialUser and "🛡️ TREBTREBALT HUB [OWNER] 🛡️" or "🐧 PENGUIN HUB 🐧"
+title.TextColor3 = isSpecialUser and Color3.fromRGB(255, 120, 120) or Color3.fromRGB(120, 210, 255)
+title.Font = Enum.Font.GothamBold; title.TextSize = 15
+
+local levelLabel = Instance.new("TextLabel", top)
+levelLabel.Size = UDim2.new(0, 220, 1, 0); levelLabel.Position = UDim2.new(1, -260, 0, 0); levelLabel.BackgroundTransparency = 1
+levelLabel.Text = "LVL: 250/250 [MAX 👑]"; levelLabel.TextColor3 = Color3.fromRGB(0, 220, 150); levelLabel.Font = Enum.Font.GothamBold; levelLabel.TextSize = 12
+
+local close = Instance.new("TextButton", top)
+close.Size = UDim2.new(0, 26, 0, 26); close.Position = UDim2.new(1, -36, 0.5, -13)
+close.BackgroundColor3 = Color3.fromRGB(0, 140, 220); close.Text = "✕"; close.TextColor3 = Color3.fromRGB(255, 255, 255); close.ZIndex = 12
+Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
+
+close.Activated:Connect(function() main.Visible = not main.Visible end)
+toggle.Activated:Connect(function() main.Visible = not main.Visible end)
+
+kBtn.Activated:Connect(function()
+    if kBox.Text == "penguin2026" then
+        keyScreen:Destroy()
+        main.Visible = true
+        toggle.Visible = true
+        miniFrame.Visible = true
+    else
+        kBox.Text = ""
+        kBox.PlaceholderText = "WRONG KEY!"
+    end
+end)
+
+local sidebar = Instance.new("Frame", main)
+sidebar.Size = UDim2.new(0, 150, 1, -55); sidebar.Position = UDim2.new(0, 12, 0, 50); sidebar.BackgroundTransparency = 1; sidebar.ZIndex = 11
+local sLayout = Instance.new("UIListLayout", sidebar); sLayout.Padding = UDim.new(0, 6)
+
+local contentArea = Instance.new("Frame", main)
+contentArea.Size = UDim2.new(1, -185, 1, -55); contentArea.Position = UDim2.new(0, 172, 0, 50)
+contentArea.BackgroundColor3 = Color3.fromRGB(24, 38, 64); contentArea.ZIndex = 11
+Instance.new("UICorner", contentArea).CornerRadius = UDim.new(0, 10)
+local cs = Instance.new("UIStroke", contentArea); cs.Color = isSpecialUser and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(0, 150, 255)
+
+local pages = {}
+local buttons = {}
+
+local function createTab(name, icon)
+    local btn = Instance.new("TextButton", sidebar)
+    btn.Size = UDim2.new(1, 0, 0, 36); btn.BackgroundColor3 = Color3.fromRGB(28, 44, 76); btn.ZIndex = 12
+    btn.Text = "   " .. icon .. "  " .. name; btn.TextColor3 = Color3.fromRGB(200, 230, 255); btn.Font = Enum.Font.GothamBold; btn.TextSize = 12
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    local bs = Instance.new("UIStroke", btn); bs.Color = Color3.fromRGB(0, 120, 200)
+
+    local page = Instance.new("ScrollingFrame", contentArea)
+    page.Size = UDim2.new(1, -16, 1, -16); page.Position = UDim2.new(0, 8, 0, 8); page.BackgroundTransparency = 1
+    page.Visible = false; page.ScrollBarThickness = 3; page.ZIndex = 12
+    local pLayout = Instance.new("UIListLayout", page); pLayout.Padding = UDim.new(0, 8)
+    pLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        page.CanvasSize = UDim2.new(0, 0, 0, pLayout.AbsoluteContentSize.Y + 10)
+    end)
+
+    pages[name] = page; buttons[name] = btn
+    btn.Activated:Connect(function()
+        for k, p in pairs(pages) do p.Visible = (k == name) end
+        for k, b in pairs(buttons) do
+            b.BackgroundColor3 = (k == name) and Color3.fromRGB(0, 140, 220) or Color3.fromRGB(28, 44, 76)
+            b.TextColor3 = (k == name) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(200, 230, 255)
+        end
+    end)
+    return page
+end
+
+local mainPage = createTab("Main", "🐧")
+local autoPage = createTab("Auto", "🔄")
+local dropsPage = createTab("Drops", "🎁")
+local playerPage = createTab("Player", "⚡")
+
+-- Recreate Admin Tab ONLY for trebtrebalt / 9190721677
+local adminPage = nil
+if isSpecialUser then
+    adminPage = createTab("Admin", "🛡️")
+end
+
+buttons["Main"].BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+buttons["Main"].TextColor3 = Color3.fromRGB(255, 255, 255)
+pages["Main"].Visible = true
+
+local function addLevelGatedToggle(parent, text, requiredLevel, cb)
+    local state = false
+    local b = Instance.new("TextButton", parent)
+    b.Size = UDim2.new(1, 0, 0, 36); b.ZIndex = 13
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    local ts2 = Instance.new("UIStroke", b)
+
+    local function updateVisuals()
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if effectiveLevel >= requiredLevel then
+            b.Text = text .. (state and ": ON" or ": OFF")
+            b.TextColor3 = Color3.fromRGB(220, 240, 255)
+            b.BackgroundColor3 = state and Color3.fromRGB(0, 140, 220) or Color3.fromRGB(32, 50, 84)
+            ts2.Color = Color3.fromRGB(0, 140, 220)
+        else
+            b.Text = text .. " [🔒 LVL " .. requiredLevel .. "]"
+            b.TextColor3 = Color3.fromRGB(150, 150, 150)
+            b.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            ts2.Color = Color3.fromRGB(80, 80, 80)
+        end
+    end
+
+    b.Activated:Connect(function()
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if effectiveLevel >= requiredLevel then
+            state = not state
+            updateVisuals()
+            cb(state)
+        else
+            b.Text = "❌ LEVEL " .. requiredLevel .. " REQUIRED!"
+            task.delay(1, updateVisuals)
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            updateVisuals()
+            task.wait(1)
+        end
+    end)
+
+    return b
+end
+
+local function addLevelGatedButton(parent, text, requiredLevel, cb)
+    local b = Instance.new("TextButton", parent)
+    b.Size = UDim2.new(1, 0, 0, 38); b.ZIndex = 13
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    local bs = Instance.new("UIStroke", b)
+
+    local function updateVisuals()
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if effectiveLevel >= requiredLevel then
+            b.Text = text
+            b.TextColor3 = Color3.fromRGB(255, 255, 255)
+            b.BackgroundColor3 = Color3.fromRGB(0, 170, 100)
+            bs.Color = Color3.fromRGB(0, 255, 150)
+        else
+            b.Text = text .. " [🔒 LVL " .. requiredLevel .. "]"
+            b.TextColor3 = Color3.fromRGB(150, 150, 150)
+            b.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            bs.Color = Color3.fromRGB(80, 80, 80)
+        end
+    end
+
+    b.Activated:Connect(function()
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if effectiveLevel >= requiredLevel then
+            cb()
+        else
+            b.Text = "❌ LEVEL " .. requiredLevel .. " REQUIRED!"
+            task.delay(1, updateVisuals)
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            updateVisuals()
+            task.wait(1)
+        end
+    end)
+
+    return b
+end
+
+-- Standard Features Setup
+local normalFastOn = false
+addLevelGatedToggle(mainPage, "🐧 NORMAL PENGUIN LOOP", 1, function(state) normalFastOn = state end)
+
+local ultraFastOn = false
+addLevelGatedToggle(mainPage, "🚀 ULTRA FAST PENGUIN LOOP", 10, function(state) ultraFastOn = state end)
+
+local hyperGodLoopOn = false
+addLevelGatedToggle(mainPage, "🔥 HYPER GOD LOOP (MAX SPEED)", 150, function(state) hyperGodLoopOn = state end)
+
+local pickupOn = false
+addLevelGatedToggle(autoPage, "📦 HYPER AUTO PICK-UP", 50, function(state) pickupOn = state end)
+
+local giftRainOn = false
+addLevelGatedToggle(dropsPage, "🎁 FORCE GIFTRAIN SPAM", 75, function(state) giftRainOn = state end)
+
+local lootItemOn = false
+addLevelGatedToggle(dropsPage, "⚡ FORCE LOOTITEM SPAM", 75, function(state) lootItemOn = state end)
+
+local chestSpamOn = false
+addLevelGatedToggle(dropsPage, "📦 FORCE CHEST OPEN SPAM", 75, function(state) chestSpamOn = state end)
+
+local coinBoostOn = false
+addLevelGatedToggle(dropsPage, "🪙 FORCE COIN BOOST SPAM", 75, function(state) coinBoostOn = state end)
+
+addLevelGatedButton(dropsPage, "🍀 TRIGGER 1000% LUCK MULTIPLIER", 200, function()
+    pcall(function()
+        for i = 1, 15 do
+            for _, name in ipairs({"GiftRain", "LootItem", "OpenChest", "ClaimReward", "SpawnCoins"}) do
+                local remote = rep:FindFirstChild(name, true) or ws:FindFirstChild(name, true)
+                if remote and remote:IsA("RemoteEvent") then remote:FireServer() end
+            end
+        end
+        if isRakoofHPZero() then addXp(1000) end
+    end)
+end)
+
+addLevelGatedButton(dropsPage, "⭐ CLAIM ALL ACTIVE DROPS INSTANTLY", 50, function()
+    pcall(function()
+        for _, name in ipairs({"GiftRain", "LootItem", "CollectDrop", "ClaimDaily"}) do
+            local remote = rep:FindFirstChild(name, true) or ws:FindFirstChild(name, true)
+            if remote and remote:IsA("RemoteEvent") then remote:FireServer() end
+        end
+        if isRakoofHPZero() then addXp(200) end
+    end)
+end)
+
+-- ADMIN PANEL & BLACKLIST SYSTEM (Exclusive to trebtrebalt / 9190721677)
+if isSpecialUser and adminPage then
+    local adminTitle = Instance.new("TextLabel", adminPage)
+    adminTitle.Size = UDim2.new(1, 0, 0, 30)
+    adminTitle.BackgroundTransparency = 1
+    adminTitle.Text = "🛡️ OWNER BLACKLIST & PLAYER CHECKER 🛡️"
+    adminTitle.TextColor3 = Color3.fromRGB(255, 80, 80)
+    adminTitle.Font = Enum.Font.GothamBold
+    adminTitle.TextSize = 12
+
+    -- Blacklist Table
+    local blacklistedUsers = {}
+
+    -- Player Tracker readout box
+    local playerTrackerBox = Instance.new("TextLabel", adminPage)
+    playerTrackerBox.Size = UDim2.new(1, 0, 0, 90)
+    playerTrackerBox.BackgroundColor3 = Color3.fromRGB(35, 20, 30)
+    playerTrackerBox.TextColor3 = Color3.fromRGB(255, 180, 180)
+    playerTrackerBox.Font = Enum.Font.Code
+    playerTrackerBox.TextSize = 11
+    playerTrackerBox.TextXAlignment = Enum.TextXAlignment.Left
+    playerTrackerBox.TextYAlignment = Enum.TextYAlignment.Top
+    Instance.new("UICorner", playerTrackerBox).CornerRadius = UDim.new(0, 6)
+
+    task.spawn(function()
+        while true do
+            pcall(function()
+                local count = #plrs:GetPlayers()
+                local text = "Connected Players (" .. count .. "):\n"
+                for _, p in ipairs(plrs:GetPlayers()) do
+                    local status = blacklistedUsers[p.Name:lower()] and " [BLACKLISTED ❌]" or " [ACTIVE ✅]"
+                    text = text .. "• " .. p.Name .. " (ID: " .. p.UserId .. ")" .. status .. "\n"
+                end
+                playerTrackerBox.Text = text
+            end)
+            task.wait(2)
+        end
+    end)
+
+    -- Blacklist Input Box
+    local blBox = Instance.new("TextBox", adminPage)
+    blBox.Size = UDim2.new(1, 0, 0, 36)
+    blBox.BackgroundColor3 = Color3.fromRGB(45, 25, 35)
+    blBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    blBox.PlaceholderText = "Enter exact username to blacklist..."
+    blBox.Text = ""
+    blBox.Font = Enum.Font.GothamBold
+    blBox.TextSize = 12
+    Instance.new("UICorner", blBox).CornerRadius = UDim.new(0, 8)
+
+    -- Blacklist Toggle Button
+    local blBtn = Instance.new("TextButton", adminPage)
+    blBtn.Size = UDim2.new(1, 0, 0, 36)
+    blBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    blBtn.Text = "🚫 ADD/REMOVE PLAYER FROM BLACKLIST"
+    blBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    blBtn.Font = Enum.Font.GothamBold
+    blBtn.TextSize = 12
+    Instance.new("UICorner", blBtn).CornerRadius = UDim.new(0, 8)
+
+    blBtn.Activated:Connect(function()
+        local targetName = blBox.Text:lower()..match and blBox.Text:lower():gsub("%s+", "") or ""
+        if targetName ~= "" then
+            if blacklistedUsers[targetName] then
+                blacklistedUsers[targetName] = nil
+                blBox.PlaceholderText = "Unblacklisted: " .. targetName
+            else
+                blacklistedUsers[targetName] = true
+                blBox.PlaceholderText = "Blacklisted: " .. targetName
+                -- If the target is in the server, notify or trigger action
+                pcall(function()
+                    for _, p in ipairs(plrs:GetPlayers()) do
+                        if p.Name:lower() == targetName then
+                            print("[PenguinHub] User " .. p.Name .. " has been blacklisted from the Hub!")
+                        end
+                    end
+                end)
+            end
+            blBox.Text = ""
+        end
+    end)
+end
+
+-- Loops & Tasks
+tasks.NormalLoop = task.spawn(function()
+    while true do
+        if normalFastOn then
+            pcall(function()
+                local char = lp.Character
+                local tool = char and char:FindFirstChildOfClass("Tool") or lp.Backpack:FindFirstChildOfClass("Tool")
+                if tool then
+                    local remote = tool:FindFirstChild("InflictTarget", true) or rep:FindFirstChild("InflictTarget", true)
+                    if remote then
+                        for _, obj in ipairs(ws:GetChildren()) do
+                            if obj:IsA("Model") and obj ~= char then
+                                local hum = obj:FindFirstChildOfClass("Humanoid")
+                                local part = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChildWhichIsA("BasePart")
+                                if hum and part and hum.Health > 0 and not plrs:GetPlayerFromCharacter(obj) then
+                                    remote:FireServer(hum, part)
+                                    if isRakoofHPZero() then addXp(1) end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            task.wait(0.05)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+conns.UltraLoop = rs.Heartbeat:Connect(function()
+    local effectiveLevel = isSpecialUser and 250 or levelData.level
+    if ultraFastOn and effectiveLevel >= 10 then
+        pcall(function()
+            local char = lp.Character
+            local tool = char and char:FindFirstChildOfClass("Tool") or lp.Backpack:FindFirstChildOfClass("Tool")
+            if tool then
+                local remote = tool:FindFirstChild("InflictTarget", true) or rep:FindFirstChild("InflictTarget", true)
+                if remote then
+                    for _, obj in ipairs(ws:GetChildren()) do
+                        if obj:IsA("Model") and obj ~= char then
+                            local hum = obj:FindFirstChildOfClass("Humanoid")
+                            local part = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChildWhichIsA("BasePart")
+                            if hum and part and hum.Health > 0 and not plrs:GetPlayerFromCharacter(obj) then
+                                remote:FireServer(hum, part)
+                                if isRakoofHPZero() then addXp(1) end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+conns.HyperGodLoop = rs.Heartbeat:Connect(function()
+    local effectiveLevel = isSpecialUser and 250 or levelData.level
+    if hyperGodLoopOn and effectiveLevel >= 150 then
+        pcall(function()
+            local char = lp.Character
+            local tool = char and char:FindFirstChildOfClass("Tool") or lp.Backpack:FindFirstChildOfClass("Tool")
+            if tool then
+                local remote = tool:FindFirstChild("InflictTarget", true) or rep:FindFirstChild("InflictTarget", true)
+                if remote then
+                    for _, obj in ipairs(ws:GetChildren()) do
+                        if obj:IsA("Model") and obj ~= char then
+                            local hum = obj:FindFirstChildOfClass("Humanoid")
+                            local part = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChildWhichIsA("BasePart")
+                            if hum and part and hum.Health > 0 and not plrs:GetPlayerFromCharacter(obj) then
+                                remote:FireServer(hum, part)
+                                remote:FireServer(hum, part)
+                                if isRakoofHPZero() then addXp(2) end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+conns.HyperPickup = rs.Stepped:Connect(function()
+    local effectiveLevel = isSpecialUser and 250 or levelData.level
+    if pickupOn and effectiveLevel >= 50 then
+        pcall(function()
+            local char = lp.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local drops = ws:FindFirstChild("Drops") or ws:FindFirstChild("drops") or ws:FindFirstChild("Items")
+                if drops then
+                    for _, obj in ipairs(drops:GetChildren()) do
+                        local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+                        if part then
+                            if typeof(firetouchinterest) == "function" then
+                                firetouchinterest(hrp, part, 0)
+                                firetouchinterest(hrp, part, 1)
+                            end
+                            if isRakoofHPZero() then addXp(1) end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+tasks.GiftRainLoop = task.spawn(function()
+    while true do
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if giftRainOn and effectiveLevel >= 75 then
+            pcall(function()
+                local remote = rep:FindFirstChild("GiftRain", true) or ws:FindFirstChild("GiftRain", true)
+                if remote and remote:IsA("RemoteEvent") then remote:FireServer() end
+                if isRakoofHPZero() then addXp(2) end
+            end)
+            task.wait(0.01)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+tasks.LootItemLoop = task.spawn(function()
+    while true do
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if lootItemOn and effectiveLevel >= 75 then
+            pcall(function()
+                local remote = rep:FindFirstChild("LootItem", true) or ws:FindFirstChild("LootItem", true)
+                if remote and remote:IsA("RemoteEvent") then remote:FireServer() end
+                if isRakoofHPZero() then addXp(2) end
+            end)
+            task.wait(0.01)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+tasks.ChestLoop = task.spawn(function()
+    while true do
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if chestSpamOn and effectiveLevel >= 75 then
+            pcall(function()
+                local remote = rep:FindFirstChild("OpenChest", true) or rep:FindFirstChild("Chest", true)
+                if remote and remote:IsA("RemoteEvent") then remote:FireServer() end
+                if isRakoofHPZero() then addXp(2) end
+            end)
+            task.wait(0.01)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+tasks.CoinLoop = task.spawn(function()
+    while true do
+        local effectiveLevel = isSpecialUser and 250 or levelData.level
+        if coinBoostOn and effectiveLevel >= 75 then
+            pcall(function()
+                local remote = rep:FindFirstChild("SpawnCoins", true) or rep:FindFirstChild("CoinBoost", true)
+                if remote and remote:IsA("RemoteEvent") then remote:FireServer() end
+                if isRakoofHPZero() then addXp(2) end
+            end)
+            task.wait(0.01)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+local speedOn = false
+addLevelGatedToggle(playerPage, "⚡ SPEED (64)", 1, function(state) speedOn = state end)
+
+conns.Speed = rs.Stepped:Connect(function()
+    pcall(function()
+        if isSpecialUser then
+            barFill.Size = UDim2.new(1, 0, 1, 0)
+            levelLabel.Text = "LVL: 250/250 [MAX 👑]"
+            miniStatus.Text = "Level: 250 / 250\nXP: MAX\nStatus: OWNER MAX 👑"
+        else
+            local currentRatio = (levelData.level >= MAX_LEVEL) and 1 or math.clamp(levelData.xp / levelData.maxXp, 0, 1)
+            barFill.Size = UDim2.new(currentRatio, 0, 1, 0)
+            levelLabel.Text = string.format("LVL: %d/250 [XP: %d/%d]", levelData.level, levelData.xp, levelData.maxXp)
+            miniStatus.Text = string.format("Level: %d / 250\nXP: %d / %d\nStatus: %s", levelData.level, levelData.xp, levelData.maxXp, (levelData.level >= MAX_LEVEL and "MAX LEVEL 👑" or "Grinding..."))
+        end
+        
+        local currentLvl = isSpecialUser and 250 or levelData.level
+        local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = speedOn and (64 + (currentLvl * 1.5)) or 16 end
+    end)
+end)
